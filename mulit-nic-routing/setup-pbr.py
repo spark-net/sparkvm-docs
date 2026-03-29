@@ -162,16 +162,36 @@ def generate_ethernet_config(
     routed: list[InterfaceInfo],
     metrics: list[int],
 ) -> dict[str, Any]:
-    """深拷贝原始配置，为所有默认路由注入 metric"""
+    """深拷贝原始配置，为所有默认路由注入 metric，并将旧式 gateway4/gateway6 转为 routes"""
     config   = copy.deepcopy(original)
     name_idx = {iface.name: i for i, iface in enumerate(routed)}
 
     for iface_name, iface_cfg in config.get("network", {}).get("ethernets", {}).items():
         if iface_name not in name_idx:
             continue
+        metric = metrics[name_idx[iface_name]]
+
+        # 禁用 RA，防止路由器通告覆盖策略路由
+        iface_cfg["accept-ra"] = False
+
+        # 为现有默认路由添加 metric
         for route in iface_cfg.get("routes", []):
             if str(route.get("to", "")) in ("default", "0.0.0.0/0", "::/0"):
-                route["metric"] = metrics[name_idx[iface_name]]
+                route["metric"] = metric
+
+        # 将旧式 gateway4 转为带 metric 的 default route
+        gw4 = iface_cfg.pop("gateway4", None)
+        if gw4:
+            iface_cfg.setdefault("routes", []).append(
+                {"to": "default", "via": str(gw4), "metric": metric}
+            )
+
+        # 将旧式 gateway6 转为带 metric 的 default route
+        gw6 = iface_cfg.pop("gateway6", None)
+        if gw6:
+            iface_cfg.setdefault("routes", []).append(
+                {"to": "::/0", "via": str(gw6), "metric": metric}
+            )
 
     return config
 
