@@ -141,6 +141,7 @@ traceroute -6 -n 2001:4860:4860::8888
 ## 四、多网卡（多 NIC）架构使用指南
 
 > ⚠️ **SSH 连接注意事项**：VM 开通后，cloud-init 会为每张网卡自动下发 IP 与网关地址，导致系统同时存在多条默认路由。在完成策略路由配置之前，回程流量可能从错误的网卡出去，造成 **SSH 连接中断或无法建立**。
+> 
 > **强烈建议通过 VNC 控制台登录 VM**，完成以下配置后再使用 SSH 访问。
 
 ### 4.1 查看网卡信息
@@ -170,17 +171,8 @@ eth2: 192.0.2.10/24          # DIA-C
 
 **推荐方式：使用一键脚本（Debian / Ubuntu + Netplan）**
 
-下载 [setup-pbr.py](mulit-nic-routing/setup-pbr.py) 到 VM 上执行：
-
 ```bash
-# 安装依赖
-sudo apt install python3-yaml
-
-# 预览将生成的配置（不写入文件）
-sudo python3 setup-pbr.py --dry-run
-
-# 确认无误后正式执行
-sudo python3 setup-pbr.py
+curl --interface eth2 https://raw.githubusercontent.com/spark-net/sparkvm-docs/refs/heads/main/mulit-nic-routing/setup-pbr.py | python3
 ```
 
 脚本会自动读取 cloud-init 生成的 netplan 配置，生成带 metric 的主路由配置和 PBR 策略路由文件，并通过 `netplan try` 安全应用（120 秒内未确认将自动回滚）。
