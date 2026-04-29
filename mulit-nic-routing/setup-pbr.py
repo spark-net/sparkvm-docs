@@ -285,6 +285,8 @@ def write_config(path: Path, data: dict[str, Any], description: str) -> None:
         f"# 由 setup-pbr.py 自动生成 · {now}\n"
     )
     path.write_text(header + dump_yaml(data), encoding="utf-8")
+    os.chown(path, 0, 0)
+    path.chmod(0o600)
 
 # ── 备份与回滚 ────────────────────────────────────────────────────────────────
 
