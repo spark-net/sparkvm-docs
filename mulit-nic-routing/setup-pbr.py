@@ -61,21 +61,38 @@ class Log:
 # ── 数据结构 ──────────────────────────────────────────────────────────────────
 
 @dataclass
+class GatewayRoute:
+    via: str
+    on_link: bool = False
+
+    def summary(self) -> str:
+        return f"{self.via} (on-link)" if self.on_link else self.via
+
+
+@dataclass
 class InterfaceInfo:
     name: str
     ipv4_subnets:  list[str] = field(default_factory=list)
-    ipv4_gateways: list[str] = field(default_factory=list)
+    ipv4_gateways: list[GatewayRoute] = field(default_factory=list)
     ipv6_subnets:  list[str] = field(default_factory=list)
-    ipv6_gateways: list[str] = field(default_factory=list)
+    ipv6_gateways: list[GatewayRoute] = field(default_factory=list)
 
     @property
     def has_default_route(self) -> bool:
         return bool(self.ipv4_gateways or self.ipv6_gateways)
 
     def summary(self) -> str:
-        gws  = ", ".join(self.ipv4_gateways + self.ipv6_gateways)
+        gws  = ", ".join(gw.summary() for gw in self.ipv4_gateways + self.ipv6_gateways)
         nets = ", ".join(self.ipv4_subnets  + self.ipv6_subnets)
         return f"{self.name}: 网关=[{gws}]  子网=[{nets}]"
+
+    def add_gateway(self, version: int, via: str, on_link: bool = False) -> None:
+        gateways = self.ipv4_gateways if version == 4 else self.ipv6_gateways
+        for gw in gateways:
+            if gw.via == via:
+                gw.on_link = gw.on_link or on_link
+                return
+        gateways.append(GatewayRoute(via=via, on_link=on_link))
 
 # ── 解析 ──────────────────────────────────────────────────────────────────────
 
@@ -89,6 +106,14 @@ def parse_netplan(path: Path) -> dict[str, Any]:
     except OSError as e:
         Log.err(f"无法读取文件 {path}: {e}")
         sys.exit(1)
+
+
+def ip_version(addr: str) -> int | None:
+    """返回 IP 地址版本；无法解析时返回 None"""
+    try:
+        return ipaddress.ip_address(addr).version
+    except ValueError:
+        return None
 
 
 def extract_interfaces(config: dict[str, Any]) -> list[InterfaceInfo]:
@@ -125,19 +150,26 @@ def extract_interfaces(config: dict[str, Any]) -> list[InterfaceInfo]:
             via = str(route.get("via", ""))
             if not via:
                 continue
-            if to in ("default", "0.0.0.0/0"):
-                info.ipv4_gateways.append(via)
+            on_link = bool(route.get("on-link", False))
+            via_version = ip_version(via)
+            if via_version is None:
+                Log.warn(f"  跳过无法解析的网关: {via}")
+                continue
+            if to == "default":
+                info.add_gateway(via_version, via, on_link)
+            elif to == "0.0.0.0/0":
+                info.add_gateway(4, via, on_link)
             elif to == "::/0":
-                info.ipv6_gateways.append(via)
+                info.add_gateway(6, via, on_link)
 
         # 兼容旧式 gateway4 / gateway6（已弃用但仍可能存在）
-        for attr, lst in [
-            ("gateway4", info.ipv4_gateways),
-            ("gateway6", info.ipv6_gateways),
+        for attr, version in [
+            ("gateway4", 4),
+            ("gateway6", 6),
         ]:
             gw = iface_cfg.get(attr)
-            if gw and str(gw) not in lst:
-                lst.append(str(gw))
+            if gw:
+                info.add_gateway(version, str(gw))
 
         interfaces.append(info)
 
@@ -207,13 +239,19 @@ def generate_pbr_config(routed: list[InterfaceInfo]) -> dict[str, Any]:
 
         # IPv4
         for gw in iface.ipv4_gateways:
-            routes.append({"to": "default", "via": gw, "table": table_id})
+            route = {"to": "default", "via": gw.via, "table": table_id}
+            if gw.on_link:
+                route["on-link"] = True
+            routes.append(route)
         for subnet in iface.ipv4_subnets:
             policy.append({"from": subnet, "table": table_id})
 
         # IPv6
         for gw in iface.ipv6_gateways:
-            routes.append({"to": "::/0", "via": gw, "table": table_id})
+            route = {"to": "::/0", "via": gw.via, "table": table_id}
+            if gw.on_link:
+                route["on-link"] = True
+            routes.append(route)
         for subnet in iface.ipv6_subnets:
             policy.append({"from": subnet, "table": table_id})
 
