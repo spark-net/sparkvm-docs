@@ -172,7 +172,8 @@ eth2: 192.0.2.10/24          # DIA-C
 **推荐方式：使用一键脚本（Debian / Ubuntu + Netplan）**
 
 ```bash
-curl --interface eth2 https://raw.githubusercontent.com/spark-net/sparkvm-docs/refs/heads/main/mulit-nic-routing/setup-pbr.py | python3
+curl --interface eth2 -fsSL https://github.com/spark-net/sparkvm-docs/raw/main/mulit-nic-routing/setup-pbr.py -o setup-pbr.py
+sudo python3 setup-pbr.py
 ```
 
 脚本会自动读取 cloud-init 生成的 netplan 配置，生成带 metric 的主路由配置和 PBR 策略路由文件，并通过 `netplan try` 安全应用（120 秒内未确认将自动回滚）。
